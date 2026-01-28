@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CatsBlock iOS 26</title>
+    <title>CatsBlock</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
@@ -12,6 +12,7 @@
             --ios-blue: #007AFF;
             --ios-red: #ff3b30;
             --ios-grey: #8e8e93;
+            --ios-green: #34c759;
             --sent-gradient: linear-gradient(180deg, #007AFF 0%, #0056B3 100%);
             --received-bg: #262629;
             --blur-header: rgba(28, 28, 30, 0.85);
@@ -106,6 +107,30 @@
         .profile-value { font-size: 16px; word-break: break-all; }
         .bio-textarea { width: 100%; background: transparent; border: none; color: white; font-size: 16px; font-family: inherit; resize: none; }
 
+        /* --- SETTINGS SPECIFIC --- */
+        .settings-row { display: flex; justify-content: space-between; align-items: center; }
+        .ios-toggle {
+            position: relative; width: 51px; height: 31px;
+            background: #39393d; border-radius: 16px; cursor: pointer; transition: 0.3s;
+        }
+        .ios-toggle.active { background: var(--ios-green); }
+        .ios-toggle::after {
+            content: ''; position: absolute; width: 27px; height: 27px;
+            background: white; border-radius: 50%; top: 2px; left: 2px;
+            transition: 0.3s; box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+        }
+        .ios-toggle.active::after { left: 22px; }
+        
+        .blocked-user-card {
+            display: flex; align-items: center; gap: 12px; padding: 12px;
+            background: var(--ios-card-bg); border-radius: 14px; margin-bottom: 10px;
+        }
+        .blocked-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+        .unblock-btn {
+            margin-left: auto; color: var(--ios-blue); font-weight: 600;
+            background: transparent; border: none; cursor: pointer;
+        }
+
         /* --- IOS ALERTS --- */
         .modal-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -163,7 +188,7 @@
         <header>
             <i class="fa-solid fa-chevron-left" style="color: var(--ios-blue); font-size: 20px; cursor:pointer;" onclick="setView('main')"></i>
             <h1 style="font-size: 20px; font-weight: 700;">My Profile</h1>
-            <div style="width: 20px;"></div>
+            <i class="fa-solid fa-gear" style="color: var(--ios-blue); font-size: 22px; cursor:pointer;" onclick="openSettings()"></i>
         </header>
         <div class="profile-container">
             <img id="my-profile-img" class="profile-avatar" src="">
@@ -183,7 +208,23 @@
         </div>
     </div>
 
-    <div id="view-chat" class="app-view">
+    <div id="view-settings" class="app-view">
+        <header>
+            <i class="fa-solid fa-chevron-left" style="color: var(--ios-blue); font-size: 20px; cursor:pointer;" onclick="setView('myProfile')"></i>
+            <h1 style="font-size: 20px; font-weight: 700;">Settings</h1>
+            <div style="width: 20px;"></div>
+        </header>
+        <div class="profile-container">
+            <div class="profile-info-box settings-row">
+                <div style="font-weight: 500;">Accept new conversations</div>
+                <div id="toggle-requests" class="ios-toggle active" onclick="toggleAcceptRequests()"></div>
+            </div>
+            
+            <h2 style="text-align: left; font-size: 14px; color: var(--ios-grey); text-transform: uppercase; margin: 25px 5px 10px;">Blocked Users</h2>
+            <div id="blocked-list-container"></div>
+        </div>
+    </div>
+        <div id="view-chat" class="app-view">
         <header style="padding-top: 50px; justify-content: flex-start; gap: 15px;">
             <i class="fa-solid fa-chevron-left" style="color: var(--ios-blue); font-size: 20px; cursor:pointer;" onclick="navigateBack()"></i>
             <div style="flex:1; text-align: center; margin-right: 35px; cursor: pointer;" onclick="openContactInfo()">
@@ -237,7 +278,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, updateDoc, getDoc, setDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, updateDoc, getDoc, setDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDy6Ewsq2egkBrELp6i9rGLRnvdIYqOxeg",
@@ -261,12 +302,14 @@
             main: document.getElementById('view-main'),
             chat: document.getElementById('view-chat'),
             myProfile: document.getElementById('view-my-profile'),
-            contactInfo: document.getElementById('view-contact-info')
+            contactInfo: document.getElementById('view-contact-info'),
+            settings: document.getElementById('view-settings')
         };
 
         function setView(viewId) {
             Object.values(views).forEach(v => v.classList.remove('active'));
             views[viewId].classList.add('active');
+            if (viewId === 'main' && auth.currentUser) { bootstrapApp(); }
         }
 
         document.getElementById('google-auth-trigger').onclick = async () => {
@@ -291,10 +334,9 @@
         });
 
         async function bootstrapApp() {
-            setView('main');
+            views.main.classList.add('active');
             const list = document.getElementById('conversations-list');
             list.innerHTML = Array(10).fill('<div class="skeleton-item"></div>').join('');
-            
             setTimeout(() => {
                 list.innerHTML = `<div style="text-align:center; padding:60px; color:var(--ios-grey); font-size: 15px;">
                     No conversation for now.<br>Click the pencil icon to start one!
@@ -302,12 +344,62 @@
             }, 1800);
         }
 
-        // --- PROFILE LOGIC ---
-        window.openUserProfile = async () => {
+        // --- SETTINGS LOGIC ---
+        window.openSettings = async () => {
             const user = auth.currentUser;
             const snap = await getDoc(doc(db, "users", user.uid));
             const data = snap.data();
             
+            const toggle = document.getElementById('toggle-requests');
+            if(data.acceptingRequests) toggle.classList.add('active');
+            else toggle.classList.remove('active');
+
+            renderBlockedList(data.blockedList || []);
+            setView('settings');
+        };
+
+        window.toggleAcceptRequests = async () => {
+            const toggle = document.getElementById('toggle-requests');
+            const newState = !toggle.classList.contains('active');
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { acceptingRequests: newState });
+            toggle.classList.toggle('active');
+        };
+
+        async function renderBlockedList(list) {
+            const container = document.getElementById('blocked-list-container');
+            container.innerHTML = list.length ? "" : `<p style="color:var(--ios-grey); font-size: 13px;">No users blocked.</p>`;
+            
+            for (const uid of list) {
+                const uSnap = await getDoc(doc(db, "users", uid));
+                if (!uSnap.exists()) continue;
+                const uData = uSnap.data();
+                
+                const div = document.createElement('div');
+                div.className = 'blocked-user-card';
+                div.innerHTML = `
+                    <img src="${uData.photoURL}" class="blocked-img">
+                    <div style="text-align: left;">
+                        <div style="font-weight: 600; font-size: 14px;">${uData.name}</div>
+                        <div style="font-size: 11px; color: var(--ios-grey);">${uid}</div>
+                    </div>
+                    <button class="unblock-btn" onclick="handleUnblock('${uid}')">Unblock</button>
+                `;
+                container.appendChild(div);
+            }
+        }
+
+        window.handleUnblock = async (uid) => {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), {
+                blockedList: arrayRemove(uid)
+            });
+            openSettings(); // Refresh view
+        };
+
+        // --- PROFILE & CHAT LOGIC ---
+        window.openUserProfile = async () => {
+            const user = auth.currentUser;
+            const snap = await getDoc(doc(db, "users", user.uid));
+            const data = snap.data();
             document.getElementById('my-profile-img').src = user.photoURL;
             document.getElementById('my-profile-name').innerText = data.name;
             document.getElementById('my-profile-id').innerText = user.uid;
@@ -325,7 +417,6 @@
             if(!currentActiveContactId) return;
             const snap = await getDoc(doc(db, "users", currentActiveContactId));
             const data = snap.data();
-            
             document.getElementById('info-profile-img').src = data.photoURL || "";
             document.getElementById('info-profile-name').innerText = data.name;
             document.getElementById('info-profile-id').innerText = currentActiveContactId;
@@ -336,18 +427,14 @@
         window.openNewConversation = async () => {
             const targetId = prompt("Enter User ID:");
             if(!targetId) return;
-
             const myId = auth.currentUser.uid;
             if(targetId === myId) { alert("You cannot start a conversation with yourself."); return; }
-
             try {
                 const userSnap = await getDoc(doc(db, "users", targetId));
                 if(!userSnap.exists()) { alert("User ID not found."); return; }
-
                 const userData = userSnap.data();
                 if(userData.acceptingRequests === false) { alert("This user is not accepting new requests."); return; }
                 if(userData.blockedList && userData.blockedList.includes(myId)) { alert("You cannot message this user."); return; }
-
                 currentActiveContactId = targetId;
                 document.getElementById('chat-contact-name').innerText = userData.name;
                 setView('chat');
@@ -356,15 +443,12 @@
 
         window.handleUserBlock = async () => {
             if(!currentActiveContactId) return;
-            await updateDoc(doc(db, "users", auth.currentUser.uid), {
-                blockedList: arrayUnion(currentActiveContactId)
-            });
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { blockedList: arrayUnion(currentActiveContactId) });
             alert("User blocked.");
             window.toggleBlockModal(false);
             setView('main');
         };
 
-        // --- UI & MESSAGES ---
         const textarea = document.getElementById('main-textarea');
         textarea.addEventListener('input', function() {
             this.style.height = 'auto';
